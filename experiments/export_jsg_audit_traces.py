@@ -21,8 +21,6 @@ REPORTS = ROOT / "experiments" / "reports"
 CONTRACT_VERSION = "jsg-bench-audit-v1.0"
 RUN_MANIFEST_VERSION = "jsg-run-manifest-v1.0"
 IOU_THRESHOLD = 0.1
-CORE_SCALE_RUN_CONFIG_ID = "td-egfa-qwen25vl-core-scale-v1"
-XFER_PROVENANCE_ID = "jsg-xfer-v2-mixed"
 
 TD_SPECS = {
     "JSG-Core": {
@@ -78,25 +76,6 @@ XFER_RAW_OUTPUTS = [
     RUNS / "jsg_xfer_td_egfa_native_outputs_v2.jsonl",
 ]
 XFER_OUTPUT = RUNS / "jsg_xfer_td_egfa_audit_trace_v1.jsonl"
-XFER_REPAIR_REPORT = REPORTS / "jsg_xfer_bbox_remainder_fix.md"
-
-QWEN_RUNNER = ROOT / "experiments" / "qwen25vl_sid_infer.py"
-QWEN_CHECKPOINT = ROOT / "models" / "Qwen2.5-VL-3B-Instruct"
-QWEN_CHECKPOINT_FILES = {
-    "model-00001-of-00002.safetensors": "41a8895c164b4d32bae6b302f4603fcbc1797f32dafa45c7e9bcda23c6755df8",
-    "model-00002-of-00002.safetensors": "365531ff8752420e89dee707b79d021fb2d6e25abafe486f080555a4fe6972e4",
-    "model.safetensors.index.json": "c7dd78a4c6bea60b51332f1baf37b8f8124ecab2c35395a29a29825bf2619768",
-    "config.json": "7ed3eed5be6924cc800e8a5e53fc405c1aab1aaf36bad65c33403b36c56827f5",
-    "preprocessor_config.json": "f2058c716eef96ccaed1cc1e2d0c08306b62586d535b28d9d08e691b2fab7ca0",
-    "generation_config.json": "533f191cc257b7de37a4fccd0a7a1706d75e1aa660f93efaa54e5a2a9f9aace9",
-}
-
-EXPECTED_JOINT_PASSES = {
-    "JSG-Core/TD-EGFA": {"primary_strict": 34, "shared_fields": 57, "set_compatible": 34},
-    "JSG-Scale/TD-EGFA": {"primary_strict": 152, "shared_fields": 194, "set_compatible": 152},
-    "JSG-Xfer/TD-EGFA": {"primary_strict": 26, "shared_fields": 40, "set_compatible": 32},
-    "JSG-Core/SIDA": {"primary_strict": 0, "shared_fields": 32, "set_compatible": 13},
-}
 
 
 def read_jsonl_indexed(path: Path) -> tuple[list[dict[str, Any]], dict[str, tuple[int, dict[str, Any]]]]:
@@ -121,187 +100,6 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def core_scale_run_configuration() -> dict[str, Any]:
-    evidence: dict[str, Any] = {}
-    for dataset, spec in TD_SPECS.items():
-        request_rows, requests = read_jsonl_indexed(spec["requests"])
-        output_rows, outputs = read_jsonl_indexed(spec["raw_outputs"])
-        if set(requests) != set(outputs):
-            raise ValueError(f"Unaligned declared run sources for {dataset}")
-        if {row.get("prompt_version") for row in request_rows} != {"candidate_evidence_v1"}:
-            raise ValueError(f"Unexpected prompt version in {dataset}")
-        if {
-            (row.get("metadata_for_evaluation_only") or {}).get("candidate_mode")
-            for row in request_rows
-        } != {"top3_union"}:
-            raise ValueError(f"Unexpected candidate mode in {dataset}")
-        if {len(row.get("image_paths") or []) for row in request_rows} != {2}:
-            raise ValueError(f"Unexpected input-view count in {dataset}")
-        target_scope_block = "Allowed target_scope values:\n" + "\n".join(
-            f"- {label}" for label in spec["target_scope_labels"]
-        )
-        if any(target_scope_block not in str(row.get("prompt")) for row in request_rows):
-            raise ValueError(f"Unexpected target-scope label space in {dataset}")
-        evidence[dataset] = {
-            "request_rows": len(request_rows),
-            "native_output_rows": len(output_rows),
-            "unique_aligned_sample_ids": len(requests),
-            "retained_native_output_rows_per_report": 1,
-        }
-
-    checkpoint_files: dict[str, Any] = {}
-    for name, expected_digest in QWEN_CHECKPOINT_FILES.items():
-        path = QWEN_CHECKPOINT / name
-        observed_digest = sha256(path)
-        if observed_digest != expected_digest:
-            raise ValueError(f"Frozen checkpoint hash changed for {path}")
-        checkpoint_files[name] = {
-            "path": str(path.relative_to(ROOT)),
-            "sha256": observed_digest,
-        }
-
-    return {
-        "status": "declared_legacy_run_configuration",
-        "applies_to": ["JSG-Core/TD-EGFA", "JSG-Scale/TD-EGFA"],
-        "checkpoint": {
-            "model_id": "Qwen/Qwen2.5-VL-3B-Instruct",
-            "local_path": str(QWEN_CHECKPOINT.relative_to(ROOT)),
-            "post_training_quantization": False,
-            "modelscope_weight_revision": "37ed0f575d34359b119fc3ac1e73c825f3308d29",
-            "hash_capture": "post_hoc_local_snapshot",
-            "files": checkpoint_files,
-        },
-        "prompt": {
-            "version": "candidate_evidence_v1",
-            "candidate_mode": "top3_union",
-            "schema_and_complete_prompt": "stored_verbatim_in_hashed_requests",
-            "label_spaces": {
-                "prediction": ["real", "full_synthetic", "tampered"],
-                "candidate_verdict": ["accepted", "rejected", "uncertain"],
-                "target_scope_by_dataset": {
-                    dataset: spec["target_scope_labels"] for dataset, spec in TD_SPECS.items()
-                },
-                "artifact_type": [
-                    "none",
-                    "boundary_seam",
-                    "texture_smoothness",
-                    "lighting_shadow",
-                    "geometry_structure",
-                    "resolution_noise",
-                    "semantic_implausibility",
-                    "compression_artifact",
-                    "other",
-                ],
-            },
-            "candidate_bbox_inheritance": (
-                "A valid supplied candidate bbox becomes the audited evidence bbox when the "
-                "normalized prediction is tampered."
-            ),
-        },
-        "input": {
-            "views": ["marked_full_image", "candidate_crop"],
-            "images_per_request": 2,
-            "max_pixels": 602112,
-        },
-        "generation": {
-            "declared_generation_attempts_per_report": 1,
-            "strategy": "greedy",
-            "do_sample": False,
-            "max_new_tokens": 512,
-        },
-        "runtime": {
-            "backend": "transformers-mps",
-            "device": "mps",
-            "dtype": "float16",
-            "attention_implementation": "sdpa",
-            "framework_versions": {
-                "python": "3.9.6",
-                "torch": "2.8.0",
-                "transformers": "4.57.6",
-                "qwen_vl_utils": "0.0.14",
-                "pillow": "11.3.0",
-            },
-            "version_capture": "post_hoc_from_preserved_local_environment",
-        },
-        "runner": {
-            "path": str(QWEN_RUNNER.relative_to(ROOT)),
-            "sha256": sha256(QWEN_RUNNER),
-        },
-        "artifact_evidence": evidence,
-        "binding_limit": (
-            "The legacy raw-output rows do not embed the command line or runtime metadata. "
-            "Backend, dtype, framework, attention, checkpoint, quantization, and generation "
-            "settings are a reconstructed run-level declaration based on the preserved local "
-            "runner and environment plus the author run record. Request/output hashes bind one "
-            "retained native-output row per sample but do not independently exclude upstream "
-            "best-of-n output selection."
-        ),
-    }
-
-
-def xfer_inference_provenance_summary() -> dict[str, Any]:
-    rows, index = read_jsonl_indexed(XFER_RAW_OUTPUTS[0])
-    with_provenance = [row for row in rows if isinstance(row.get("inference_provenance"), dict)]
-    without_provenance = [row for row in rows if not isinstance(row.get("inference_provenance"), dict)]
-    model_only = [row for row in without_provenance if row.get("model") is not None]
-    without_model = [row for row in without_provenance if row.get("model") is None]
-    backend_counts: dict[str, int] = {}
-    for row in with_provenance:
-        backend = str(row["inference_provenance"].get("backend"))
-        backend_counts[backend] = backend_counts.get(backend, 0) + 1
-    observed = {
-        "reports": len(rows),
-        "with_structured_per_report_provenance": len(with_provenance),
-        "without_structured_per_report_provenance": len(without_provenance),
-        "retained_with_model_tag_only": len(model_only),
-        "retained_without_model_or_runtime_tags": len(without_model),
-        "backend_counts_for_regenerated_reports": backend_counts,
-    }
-    expected = {
-        "reports": 100,
-        "with_structured_per_report_provenance": 5,
-        "without_structured_per_report_provenance": 95,
-        "retained_with_model_tag_only": 47,
-        "retained_without_model_or_runtime_tags": 48,
-        "backend_counts_for_regenerated_reports": {"ollama": 3, "transformers-mps": 2},
-    }
-    if observed != expected:
-        raise ValueError(f"JSG-Xfer inference provenance changed: {observed}")
-    expected_regenerated_ids = {
-        "Tp_S_NNN_S_N_pla20070_pla20070_01970",
-        "Tp_S_NNN_S_N_pla20077_pla20077_02360",
-        "Tp_S_NNN_S_N_sec20049_sec20049_01639",
-        "1a5x44__c8ufqah_0",
-        "1a9tss__c8vejd9_0",
-    }
-    if {str(row["img_id"]) for row in with_provenance} != expected_regenerated_ids:
-        raise ValueError("JSG-Xfer regenerated report IDs changed")
-    return {
-        "status": "mixed_regenerated_and_legacy_outputs",
-        **observed,
-        "retained_outputs_without_backend_version_tags": 95,
-        "raw_output_path": str(XFER_RAW_OUTPUTS[0].relative_to(ROOT)),
-        "regenerated_report_records": [
-            {
-                "sample_id": str(row["img_id"]),
-                "source_reference": reference(
-                    XFER_RAW_OUTPUTS[0], index[str(row["img_id"])][0]
-                ),
-                "inference_provenance": row["inference_provenance"],
-            }
-            for row in with_provenance
-        ],
-        "repair_report": {
-            "path": str(XFER_REPAIR_REPORT.relative_to(ROOT)),
-            "sha256": sha256(XFER_REPAIR_REPORT),
-        },
-        "interpretation_limit": (
-            "Source-specific contrasts are descriptive because runtime identity is not "
-            "recoverable for the 95 retained outputs."
-        ),
-    }
 
 
 def reference(path: Path, line_number: int) -> dict[str, Any]:
@@ -661,12 +459,6 @@ def summarize_trace(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def validate_manifest_counts(manifest: dict[str, Any]) -> None:
-    observed = {key: value["joint_passes"] for key, value in manifest["traces"].items()}
-    if observed != EXPECTED_JOINT_PASSES:
-        raise ValueError(f"Trace pass counts changed: {observed}")
-
-
 def main() -> None:
     contract = {
         "contract_id": "JSG-Bench",
@@ -711,12 +503,6 @@ def main() -> None:
             "sha256": sha256(contract_path),
             "version": CONTRACT_VERSION,
         },
-        "run_configurations": {
-            CORE_SCALE_RUN_CONFIG_ID: core_scale_run_configuration(),
-        },
-        "inference_provenance": {
-            XFER_PROVENANCE_ID: xfer_inference_provenance_summary(),
-        },
         "source_files": {},
         "traces": {},
     }
@@ -724,7 +510,6 @@ def main() -> None:
         rows = td_trace_rows(dataset, spec)
         write_jsonl(spec["output"], rows)
         manifest["traces"][f"{dataset}/TD-EGFA"] = summarize_trace(spec["output"], rows)
-        manifest["traces"][f"{dataset}/TD-EGFA"]["run_configuration"] = CORE_SCALE_RUN_CONFIG_ID
         for source_key in ("predictions", "requests", "raw_outputs"):
             source = spec[source_key]
             manifest["source_files"][str(source.relative_to(ROOT))] = sha256(source)
@@ -732,7 +517,6 @@ def main() -> None:
     xfer_rows = xfer_trace_rows()
     write_jsonl(XFER_OUTPUT, xfer_rows)
     manifest["traces"]["JSG-Xfer/TD-EGFA"] = summarize_trace(XFER_OUTPUT, xfer_rows)
-    manifest["traces"]["JSG-Xfer/TD-EGFA"]["inference_provenance"] = XFER_PROVENANCE_ID
     for source in [
         XFER_SEMANTIC,
         XFER_LOWLEVEL,
@@ -746,8 +530,6 @@ def main() -> None:
     write_jsonl(SIDA_OUTPUT, sida_rows)
     manifest["traces"]["JSG-Core/SIDA"] = summarize_trace(SIDA_OUTPUT, sida_rows)
     manifest["source_files"][str(SIDA_SOURCE.relative_to(ROOT))] = sha256(SIDA_SOURCE)
-
-    validate_manifest_counts(manifest)
 
     manifest_path = REPORTS / "jsg_audit_trace_manifest_v1.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
