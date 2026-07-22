@@ -1,0 +1,12 @@
+datasets==4.5.0
+huggingface-hub==1.8.0
+kagglehub==0.3.13
+modelscope==1.36.3
+numpy==2.0.2
+Pillow==11.3.0
+pyarrow==21.0.0
+qwen-vl-utils==0.0.14
+requests==2.32.5
+torch==2.8.0
+tqdm==4.67.3
+transformers==4.57.6
