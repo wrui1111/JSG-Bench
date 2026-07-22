@@ -1,0 +1,65 @@
+{
+  "contract_id": "JSG-Bench",
+  "version": "jsg-bench-audit-v1.0",
+  "scope": "sample-level audit of structured image-forensic reports",
+  "schema": [
+    "prediction",
+    "artifact_type",
+    "target_scope",
+    "evidence_bbox"
+  ],
+  "tampered_applicability": [
+    "prediction",
+    "artifact",
+    "target",
+    "spatial"
+  ],
+  "primary_condition_order": [
+    "parse",
+    "prediction",
+    "artifact",
+    "target",
+    "spatial"
+  ],
+  "spatial_rule": {
+    "metric": "bbox_iou",
+    "threshold": 0.1,
+    "comparison": ">="
+  },
+  "missing_policy": "A malformed report or missing applicable field fails its condition.",
+  "denominator_policy": "Every declared evaluation sample remains in the Joint denominator.",
+  "normalization_policy": "System output is normalized without evaluation-GT access.",
+  "trace_required_fields": [
+    "sample_id",
+    "system_id",
+    "input_condition",
+    "parser_or_adapter_version",
+    "source_references",
+    "normalized_fields",
+    "applicability",
+    "evaluated_region",
+    "audit_profiles"
+  ],
+  "profiles": {
+    "primary_strict": [
+      "parse",
+      "prediction",
+      "artifact",
+      "target",
+      "spatial"
+    ],
+    "shared_fields": [
+      "parse",
+      "prediction",
+      "target",
+      "spatial"
+    ],
+    "set_compatible": [
+      "parse",
+      "prediction",
+      "artifact_set_hit",
+      "target",
+      "spatial"
+    ]
+  }
+}

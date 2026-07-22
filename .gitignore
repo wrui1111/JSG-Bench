@@ -1,0 +1,41 @@
+# Python environments and caches
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+
+# Model weights and caches
+models/
+.hf_cache/
+*.bin
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# SID-Set and other external datasets
+SID_Set/
+downloads/
+external/SIDA/
+external/downloads/
+external/datasets/
+external/annotations/
+remote_sida/
+
+# Generated experiment inputs, outputs, reports, and assets
+experiments/runs/
+experiments/reports/
+experiments/region_assets/
+logs/
+outputs/
+results/
+figures/
+*.log
