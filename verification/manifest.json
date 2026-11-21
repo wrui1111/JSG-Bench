@@ -1,0 +1,63 @@
+{
+  "core_target_mapping": {
+    "file": "core_target_mapping.jsonl",
+    "rows": 200,
+    "sha256": "1923323b237907c52f4d5ed19553b599c080bf1333db074c703cb6d9482be384"
+  },
+  "excluded": "Images, masks, coordinates, gold semantic labels, original IDs, native text, and checkpoints.",
+  "gate_records_sha256": "d63de4533d72270eebb6f76682a3a294407f205b2d923da3e22bee25fe7c7ffd",
+  "records": 900,
+  "scale_pairs": {
+    "donor_seed": 20260729,
+    "file": "scale_package_pairs.jsonl",
+    "gate_order": [
+      "parse",
+      "prediction",
+      "artifact",
+      "target",
+      "spatial"
+    ],
+    "iou_threshold": 0.1,
+    "rows": 600,
+    "sha256": "4411aedaa7c8c217a7748d3f8fe758fdbaac134e7d84aa96489187f5f54067bf"
+  },
+  "scale_stability_pairs": {
+    "donor_seeds": [
+      20260729,
+      20260730,
+      20260731,
+      20260732,
+      20260733
+    ],
+    "file": "scale_stability_pairs.jsonl",
+    "gate_order": [
+      "parse",
+      "prediction",
+      "artifact",
+      "target",
+      "spatial"
+    ],
+    "iou_threshold": 0.1,
+    "reports_per_run": 600,
+    "rows": 3600,
+    "runs": 6,
+    "sha256": "225da46dae6fd90b4b4f84ccc81d5e2bd6eaed7dd4195768b92151f89809eb35",
+    "unchanged_input_repeats": 1
+  },
+  "scope": "Primary gates, Scale donor assignments and repeat digests, Core target mappings, and Xfer reweighting.",
+  "source_trace_sha256": {
+    "jsg_core_sida_audit_trace_v1.jsonl": "5a8017d65c9df600dfcc338dc2072eeba627f232fc715c1015cfbd6bfd55cc38",
+    "jsg_core_td_egfa_audit_trace_pixel5d_v2.jsonl": "01bcdbfc4ebc0bb195f63a3309346e1e19bd78589d37778281000b989572e0a3",
+    "jsg_scale_td_egfa_audit_trace_pixel5d_v2.jsonl": "c59294fa8dc29811852a037dbaac92a8c10a74d6a837f20918b06280c4557882",
+    "jsg_xfer_td_egfa_audit_trace_pixel5d_v2.jsonl": "dca243b1fc534601afc8b80efcbf8be973d75f29fbcc633ac9f2236ea95b92c7"
+  },
+  "version": "jsg-gate-replay-v1.5",
+  "xfer_pool_counts": {
+    "CASIA2|candidate_iou<0.1": 763,
+    "CASIA2|candidate_iou>=0.3": 57,
+    "CASIA2|candidate_iou[0.1,0.3)": 176,
+    "IMD2020|candidate_iou<0.1": 993,
+    "IMD2020|candidate_iou>=0.3": 459,
+    "IMD2020|candidate_iou[0.1,0.3)": 558
+  }
+}

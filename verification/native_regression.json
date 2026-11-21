@@ -1,0 +1,51 @@
+{
+  "semantic_reference_sha256": "a92a225816426660eba63600f6a5171103cae536b0cdea2071754e30776b4150",
+  "free_reports": {
+    "qwen25vl": {
+      "reports": 300,
+      "parsed": 300,
+      "artifact_type_correct": 136,
+      "artifact_type_changed": 0,
+      "target_scope_correct": 101,
+      "target_scope_changed": 0
+    },
+    "ollama7b": {
+      "reports": 300,
+      "parsed": 300,
+      "artifact_type_correct": 103,
+      "artifact_type_changed": 0,
+      "target_scope_correct": 107,
+      "target_scope_changed": 0
+    },
+    "minicpm45": {
+      "reports": 300,
+      "parsed": 300,
+      "artifact_type_correct": 102,
+      "artifact_type_changed": 0,
+      "target_scope_correct": 105,
+      "target_scope_changed": 0
+    }
+  },
+  "td_regions": {
+    "JSG-Core": {
+      "inherited_proposal": 99,
+      "missing": 1
+    },
+    "JSG-Scale": {
+      "inherited_proposal": 595,
+      "missing": 5
+    },
+    "JSG-Xfer": {
+      "inherited_proposal": 100
+    }
+  },
+  "sida_parse": {
+    "reports": 100,
+    "changed": 0
+  },
+  "source_files": {
+    "experiments/runs/sid_explain300_evidence_explanation_v2_qwen25vl_outputs.jsonl": "5902a0e0083dc36f81ddc408a8aeb25e2a6d52771abc63b4d30e30d39e3fb871",
+    "experiments/runs/sid_explain300_evidence_explanation_v2_ollama7b_outputs.jsonl": "bd28395c263a61ff113acdda4495f7639e39f862faa94bdad99ea8f676f30f87",
+    "experiments/runs/sid_explain300_evidence_explanation_v2_minicpm45_outputs.jsonl": "7b39dae79741be7019d79e737cb2f65041b32716ac291124d9c9499ca1f7313f"
+  }
+}

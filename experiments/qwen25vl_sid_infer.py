@@ -92,6 +92,27 @@ def load_model(model_path: Path, device: str) -> Qwen2_5_VLForConditionalGenerat
     return model
 
 
+def runtime_provenance(args: argparse.Namespace, device: str, model: Any) -> dict[str, Any]:
+    """Per-row backend/version record so every output is self-describing."""
+    import platform
+
+    import transformers
+
+    return {
+        "backend": "transformers",
+        "transformers": transformers.__version__,
+        "torch": torch.__version__,
+        "python": platform.python_version(),
+        "device": device,
+        "dtype": str(getattr(model, "dtype", "unknown")).replace("torch.", ""),
+        "attn_implementation": "sdpa",
+        "decoding": "greedy",
+        "max_new_tokens": args.max_new_tokens,
+        "max_pixels": args.max_pixels,
+        "model_path": str(args.model_path),
+    }
+
+
 def build_messages(row: dict[str, Any]) -> list[dict[str, Any]]:
     image_paths = row.get("image_paths")
     if not isinstance(image_paths, list) or not image_paths:
@@ -201,6 +222,7 @@ def main() -> None:
         use_fast=False,
     )
     model = load_model(args.model_path, device)
+    runtime = runtime_provenance(args, device, model)
 
     for row in tqdm(rows, desc="Qwen2.5-VL SID inference"):
         try:
@@ -217,6 +239,7 @@ def main() -> None:
                 "image_path": row.get("image_path"),
                 "error": f"{type(exc).__name__}: {exc}",
             }
+        out["runtime"] = runtime
         append_jsonl(args.output, out)
 
     print(f"Wrote Qwen2.5-VL outputs to {args.output}")

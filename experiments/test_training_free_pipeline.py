@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -10,6 +12,7 @@ from experiments.training_free_pipeline import (
     bbox_from_blocks,
     candidate_bboxes_from_scores,
     lowlevel_block_features,
+    lowlevel_evidence_for_row,
 )
 
 
@@ -87,6 +90,26 @@ class BboxFromBlocksTest(unittest.TestCase):
         )
 
         self.assertEqual(candidates[0]["bbox"], [434, 434, 509, 501])
+
+
+class LowlevelEvidenceSelectionTest(unittest.TestCase):
+    def test_thresholded_top_eight_branch_uses_stable_row_major_order(self) -> None:
+        image = np.zeros((256, 256, 3), dtype=np.float32)
+        zeros = np.zeros((256, 256), dtype=np.float32)
+        z_scores = np.zeros((256, len(LOWLEVEL_FEATURE_NAMES)), dtype=np.float32)
+        z_scores[:12, :] = 10.0
+
+        with (
+            patch("experiments.training_free_pipeline.image_array", return_value=(image, 1.0, 1.0)),
+            patch("experiments.training_free_pipeline.gray_edges", return_value=(zeros, zeros)),
+            patch("experiments.training_free_pipeline.robust_z", return_value=z_scores),
+        ):
+            output = lowlevel_evidence_for_row(
+                {"img_id": "branch-test", "image_path": "branch-test.png", "class_dir": "tampered"},
+                Path("."),
+            )
+
+        self.assertEqual(output["lowlevel_candidate_bbox"], [0, 0, 128, 16])
 
 
 if __name__ == "__main__":

@@ -93,6 +93,12 @@ def native_prediction(row: dict) -> str | None:
     return None
 
 
+def report_parse_valid(row: dict) -> bool:
+    """Check native report availability without requiring a recognized class."""
+    text = row.get("native_text_normalized")
+    return row.get("runtime_status") == "ok" and isinstance(text, str) and bool(text.strip())
+
+
 def section(text: str, start: str, end: str | None = None) -> str:
     lower = text.lower()
     start_index = lower.find(start.lower())
@@ -210,13 +216,9 @@ def gold_record(row: dict) -> dict:
 
 
 def condition_record(parse: bool, prediction: bool, artifact: bool, target: bool, spatial: bool) -> dict:
-    values = {
-        "parse": bool(parse),
-        "prediction": bool(prediction),
-        "artifact": bool(artifact),
-        "target": bool(target),
-        "spatial": bool(spatial),
-    }
+    from audit_validation import gate_conditions
+    values = gate_conditions(parse, prediction=prediction, artifact=artifact,
+                             target=target, spatial=spatial)
     failed = [condition for condition in CONDITIONS if not values[condition]]
     return {"conditions": values, "failed_conditions": failed, "joint": not failed}
 
@@ -296,7 +298,12 @@ def main() -> None:
         artifact, artifact_set, artifact_evidence = artifacts_from_text(text)
         mask_paths = resolve_mask_paths(native_row)
         evidence_bbox, mask_pixels = bbox_from_masks(mask_paths)
-        parse_valid = native_row.get("runtime_status") == "ok" and bool(text) and prediction is not None
+        # Structural report availability is separate from field recognition.
+        # An unrecognized class is a failed prediction gate, not a parse failure.
+        parse_valid = report_parse_valid(native_row)
+        if not parse_valid:
+            prediction, target, artifact, evidence_bbox = None, None, None, None
+            artifact_set = []
         iou = bbox_iou(evidence_bbox, gold_row["evidence_bbox"])
         strict = condition_record(
             parse_valid,

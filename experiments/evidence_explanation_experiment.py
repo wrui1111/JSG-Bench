@@ -9,6 +9,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from audit_validation import check_output_ids, field_valid, image_dimensions, index_rows, valid_bbox
+
 
 PREDICTION_ALIASES = {
     "real": "real",
@@ -257,17 +259,6 @@ def normalize_target(value: Any) -> str:
     return TARGET_ALIASES.get(normalize_text(value), normalize_text(value) or "none")
 
 
-def valid_bbox(value: Any) -> list[int] | None:
-    if not isinstance(value, list) or len(value) != 4:
-        return None
-    try:
-        x1, y1, x2, y2 = [int(round(float(v))) for v in value]
-    except (TypeError, ValueError):
-        return None
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return [x1, y1, x2, y2]
-
 
 def bbox_iou(a: list[int] | None, b: list[int] | None) -> float:
     if not a or not b:
@@ -304,6 +295,8 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def load_vlm_result(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("error"):
+        return {}
     if isinstance(row.get("vlm_result"), dict):
         return row["vlm_result"]
     if isinstance(row.get("vlm_raw_text"), str):
@@ -341,18 +334,22 @@ def gold_item(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def prediction_item(row: dict[str, Any]) -> dict[str, Any]:
+def prediction_item(row: dict[str, Any], width: int | None = None, height: int | None = None) -> dict[str, Any]:
     result = load_vlm_result(row)
     prediction_value = result.get("prediction") or result.get("class") or result.get("evidence_mode")
     return {
         "prediction": normalize_prediction(prediction_value),
+        "prediction_present": field_valid(prediction_value, normalize_prediction(prediction_value), set(PREDICTION_ALIASES.values())),
         "evidence_mode": normalize_text(result.get("evidence_mode")),
         "artifact_type": normalize_artifact(result.get("artifact_type")),
+        "artifact_present": field_valid(result.get("artifact_type"), normalize_artifact(result.get("artifact_type")), set(ARTIFACT_ALIASES.values())),
         "target_scope": normalize_target(result.get("target_scope")),
-        "evidence_bbox": valid_bbox(result.get("evidence_bbox")),
+        "target_present": field_valid(result.get("target_scope"), normalize_target(result.get("target_scope")), set(TARGET_ALIASES.values())),
+        "evidence_bbox": valid_bbox(result.get("evidence_bbox"), width, height),
         "evidence_text": result.get("evidence_text"),
         "confidence": result.get("confidence"),
         "parsed": bool(result),
+        "bbox_explicit_null": "evidence_bbox" in result and result["evidence_bbox"] is None,
     }
 
 
@@ -394,8 +391,9 @@ def make_requests(args: argparse.Namespace) -> None:
 
 
 def evaluate(args: argparse.Namespace) -> None:
-    annotations = {row["img_id"]: row for row in read_jsonl(args.annotations)}
-    outputs = read_jsonl(args.outputs)
+    annotations = index_rows(read_jsonl(args.annotations), "annotations")
+    outputs = index_rows(read_jsonl(args.outputs), "outputs")
+    check_output_ids(annotations, outputs)
     rows_out = []
     counts = Counter()
     by_class = {name: Counter() for name in ["real", "full_synthetic", "tampered"]}
@@ -403,19 +401,19 @@ def evaluate(args: argparse.Namespace) -> None:
     pointing_hits = []
     confusion = {name: Counter() for name in ["real", "full_synthetic", "tampered"]}
 
-    for out in outputs:
-        img_id = out.get("img_id")
-        ann = annotations.get(img_id)
-        if not ann:
-            continue
+    for img_id, ann in annotations.items():
+        out = outputs.get(img_id, {})
+        width, height = image_dimensions(ann)
         gold = gold_item(ann)
-        pred = prediction_item(out)
+        if gold["evidence_bbox"] is not None and valid_bbox(gold["evidence_bbox"], width, height) is None:
+            raise ValueError(f"Reference bbox outside image for {img_id}")
+        pred = prediction_item(out, width, height)
         cls = gold["prediction"]
         counts["samples"] += 1
         counts["parsed"] += int(pred["parsed"])
-        pred_ok = pred["prediction"] == gold["prediction"]
-        artifact_ok = pred["artifact_type"] == gold["artifact_type"]
-        target_ok = pred["target_scope"] == gold["target_scope"]
+        pred_ok = bool(pred["parsed"] and pred["prediction_present"] and pred["prediction"] == gold["prediction"])
+        artifact_ok = bool(pred["parsed"] and pred["artifact_present"] and pred["artifact_type"] == gold["artifact_type"])
+        target_ok = bool(pred["parsed"] and pred["target_present"] and pred["target_scope"] == gold["target_scope"])
         counts["prediction_correct"] += int(pred_ok)
         counts["artifact_correct"] += int(artifact_ok)
         counts["target_correct"] += int(target_ok)
@@ -440,7 +438,7 @@ def evaluate(args: argparse.Namespace) -> None:
             by_class[cls]["bbox_iou_0_1"] += int(bbox_iou_value >= 0.1)
             by_class[cls]["bbox_iou_0_3"] += int(bbox_iou_value >= 0.3)
             by_class[cls]["pointing_hit"] += int(pointing_hit)
-        elif pred["evidence_bbox"] is None:
+        elif pred["parsed"] and pred["bbox_explicit_null"] and pred["evidence_bbox"] is None:
             counts["null_bbox_correct"] += 1
             by_class[cls]["null_bbox_correct"] += 1
         counts["null_bbox_expected"] += int(gold["evidence_bbox"] is None)
@@ -465,6 +463,8 @@ def evaluate(args: argparse.Namespace) -> None:
         "annotations": str(args.annotations),
         "outputs": str(args.outputs),
         "samples": total,
+        "missing_outputs": len(set(annotations) - set(outputs)),
+        "validation_version": "jsg-evaluator-validation-v1.1",
         "parse_rate": counts["parsed"] / total if total else 0.0,
         "prediction_accuracy": counts["prediction_correct"] / total if total else 0.0,
         "artifact_type_accuracy": counts["artifact_correct"] / total if total else 0.0,

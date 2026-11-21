@@ -1,8 +1,34 @@
 # JSG-Bench
 
-Reproducibility code and annotation-schema examples for the Joint Spatial--Semantic Grounding Benchmark (JSG-Bench).
+JSG-Bench provides code, adapters, and records for the Joint Semantic and Spatial Gating (JSG) audit of structured image-forensic reports.
 
 This repository contains the experiment and evaluation source code needed for JSG-Core, JSG-Scale, JSG-Xfer, the TD-EGFA reference pipeline, the native SIDA adapter audit, spatial controls, criterion-relaxation analyses, paired contrasts, multi-VLM diagnostics, and inter-annotator agreement (IAA) evaluation.
+
+The Xfer results use the complete 100-report `pixel5d-v2` family. The archived
+responses lacked per-row runtime fields; a repeated run using the declared
+MPS configuration reproduced all 100 raw responses. The run ledger records
+the source and repeat separately.
+
+## Three reproduction entry points
+
+1. **Replay reported gates:** use the S1 archive or `verification/` and run
+   `python experiments/verify_gate_release.py`. Inputs are the shipped gate
+   records and manifest; no images or models are needed.
+2. **Rescore native reports:** run `python experiments/verify_native_regression.py
+   --source-root /path/to/local/archive --verification-dir /path/to/output`.
+   Inputs are native responses, request metadata, semantic references, and
+   retained normalized reports. The regression checks field validity,
+   structure, box provenance, and the frozen results.
+3. **Repeat inference:** use the source images, marked views/crops, frozen
+   requests, checkpoint, and runtime described in `docs/run_provenance.md`.
+   `experiments/run_scale_stability.py` prepares and resumes one unchanged
+   Scale rerun and four additional donor seeds. Its complete per-run results
+   and paired records are saved under `experiments/runs/scale_stability_v1/`.
+
+Version 1.5 supplementary tables and the regression record are documented in
+`verification/README.md` and `docs/revision_reproducibility_v1.5.md`. The
+[v1.5 release](https://github.com/wrui1111/JSG-Bench/releases/tag/v1.5)
+binds this code snapshot and the standalone supplement.
 
 ## Repository scope
 
@@ -11,22 +37,53 @@ Included:
 - executable experiment and evaluation source code;
 - the frozen `jsg-bench-audit-v1.0` contract;
 - four small IAA schema examples, each containing one real, one full-synthetic, and one tampered record;
-- download helpers and exact dependency versions.
+- download helpers and exact dependency versions;
+- 900 primary gate records, 3,600 Scale pairs, five donor mappings, 600 pairs of raw response digests, and 200 Core target-mapping records.
 
 Not included:
 
 - SID-Set images, masks, full split files, or full semantic annotations;
 - model checkpoints or model caches;
-- raw model responses, intermediate requests, candidate crops, logs, reports, metrics, figures, or other result artifacts;
+- raw model responses, intermediate requests, candidate crops, logs, full traces, metrics, and figures (the gate-only replay under `verification/` is included);
 - SIDA source code, which remains in its upstream repository.
 
 The exclusions above are also enforced by `.gitignore`.
+
+## Reproduce the gate-level aggregates
+
+Run from this directory after installing the recorded dependencies:
+
+```bash
+python -m unittest discover -s experiments -p 'test_*.py' -v
+python experiments/verify_gate_release.py
+python experiments/verify_gate_release.py --changed-ids
+```
+
+The verifier checks file hashes, primary counts, fixed strata, Fréchet bounds,
+Wilson–MOVER intervals, and J-AUC. It reproduces the four Scale transition
+counts and both Xfer pool-weighted intervals. The changed-IDs command lists the 108
+changed Scale reports and their gate vectors. The [S1 guide](verification/README.md)
+describes the files and their identifiers.
+See the [v1.5 reproducibility notes](docs/revision_reproducibility_v1.5.md).
+
+## Documentation and provenance
+
+- [Protocol-observability coding ledger](docs/protocol_observability_coding.md):
+  cell-level evidence, inspected versions, and decision rules supporting the
+  manuscript's comparison table.
+- [Run-provenance ledger](docs/run_provenance.md): the distinct JSG-Scale
+  artifact families, the JSG-Xfer `pixel5d-v2` family, the same-runtime
+  control suite, and their SHA-256 identifiers.
+- [Third-party data and runtime notices](THIRD_PARTY_NOTICES.md): dataset
+  sources, distribution boundaries, citation requests, and licensing
+  uncertainty that must be resolved with each provider.
 
 ## Layout
 
 ```text
 annotation_examples/  Three-record IAA schema examples only
 configs/              Frozen JSG audit contract
+verification/         Gate-only aggregate-replay records and manifest
 experiments/          Experiment, adapter, audit, and analysis code
 scripts/              Dataset and model download helpers
 requirements.txt      Recorded Python environment for JSG/TD-EGFA
@@ -202,7 +259,6 @@ All generated requests, outputs, metrics, and reports remain local and are ignor
 The frozen contract is `configs/jsg_audit_contract_v1.json`. Once the required local predictions and human references have been placed at the paths expected by the scripts, the principal audit commands are:
 
 ```bash
-python experiments/build_pixel5d_audit_traces.py
 python experiments/export_jsg_audit_traces.py
 python experiments/joint_grounding_analysis.py
 python experiments/evaluate_sida_jsg_core.py
@@ -211,6 +267,12 @@ python experiments/criterion_relaxation_analysis.py
 python experiments/paired_benchmark_contrasts.py
 python experiments/joint_threshold_multivlm_analysis.py
 ```
+
+`export_jsg_audit_traces.py` is the canonical trace entry point. It validates
+the frozen contract fields and asserts the manuscript's Core/Scale/Xfer
+strict-primary pass counts of 35/156/21 (image-aligned-v2 spatial references). The earlier
+`build_pixel5d_audit_traces.py` command remains as a compatibility alias to the
+same exporter; it no longer maintains a separate trace schema.
 
 These commands intentionally write only to ignored run/report directories.
 

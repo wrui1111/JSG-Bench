@@ -1,0 +1,17 @@
+{
+  "design": "scale-stability-v1",
+  "cohort": "JSG-Scale",
+  "reports_per_run": 600,
+  "existing_donor_seed": 20260729,
+  "additional_donor_seeds": [20260730, 20260731, 20260732, 20260733],
+  "unchanged_input_repeats": 1,
+  "new_inferences": 3000,
+  "device": "mps",
+  "max_pixels": 602112,
+  "max_new_tokens": 512,
+  "iou_threshold": 0.1,
+  "decoder": "greedy",
+  "unit": "image pair within each run",
+  "report": ["joint", "both", "exits", "entries", "neither", "changed_fraction",
+             "jaccard", "exit_spatial_only", "entry_spatial_only", "spatial_only_fraction_of_changes"]
+}

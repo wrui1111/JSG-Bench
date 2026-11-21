@@ -971,7 +971,8 @@ def candidate_bboxes_from_scores(
 ) -> list[dict[str, Any]]:
     if len(block_scores) == 0:
         return []
-    order = np.argsort(block_scores)[::-1]
+    row_major_index = np.arange(len(block_scores))
+    order = np.lexsort((row_major_index, -block_scores))
     candidates: list[dict[str, Any]] = []
     used: set[tuple[int, int]] = set()
     for score_idx in order:
@@ -1065,11 +1066,12 @@ def lowlevel_evidence_for_row(row: dict[str, Any], sid_root: Path) -> dict[str, 
         )
     z = robust_z(matrix)
     block_scores = z.mean(axis=1)
+    row_major_index = np.arange(len(block_scores))
     score_threshold = max(float(np.percentile(block_scores, 95)), 2.0)
     picked = [indices[i] for i, score in enumerate(block_scores) if score >= score_threshold]
 
     if len(picked) > 8:
-        top_indices = np.argsort(block_scores)[-8:]
+        top_indices = np.lexsort((row_major_index, -block_scores))[:8]
         picked = [indices[i] for i in top_indices]
 
     candidate_bbox = bbox_from_blocks(picked, block_h, block_w, height, width, scale_x, scale_y)
@@ -1394,8 +1396,11 @@ def valid_bbox(value: Any) -> list[int] | None:
     if not isinstance(value, list) or len(value) != 4:
         return None
     try:
-        x1, y1, x2, y2 = [int(round(float(v))) for v in value]
-    except (TypeError, ValueError):
+        values = [float(v) for v in value]
+        if not all(math.isfinite(v) for v in values):
+            return None
+        x1, y1, x2, y2 = [int(round(v)) for v in values]
+    except (TypeError, ValueError, OverflowError):
         return None
     if x2 <= x1 or y2 <= y1:
         return None

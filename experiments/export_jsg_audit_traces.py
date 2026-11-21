@@ -14,22 +14,27 @@ import math
 from pathlib import Path
 from typing import Any
 
+from stratified_statistics import xfer_stratum
+from candidate_evidence_explanation import prediction_item
+from audit_validation import gate_conditions
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "experiments" / "runs"
 REPORTS = ROOT / "experiments" / "reports"
+CONFIGS = ROOT / "configs"
 CONTRACT_VERSION = "jsg-bench-audit-v1.0"
 RUN_MANIFEST_VERSION = "jsg-run-manifest-v1.0"
 IOU_THRESHOLD = 0.1
 
 TD_SPECS = {
     "JSG-Core": {
-        "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct",
-        "input_condition": "known-tampered/proposal-grounded/B_top3",
-        "predictions": RUNS / "sid_explain300_tampered100_candidate_top3_revised_predictions.jsonl",
-        "requests": RUNS / "sid_explain300_tampered100_candidate_top3_requests.jsonl",
-        "raw_outputs": RUNS / "sid_explain300_tampered100_candidate_top3_qwen25vl_outputs.jsonl",
-        "output": RUNS / "jsg_core_td_egfa_audit_trace_v1.jsonl",
+        "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct/pixel5d-v2",
+        "input_condition": "known-tampered/proposal-grounded/B_top3/pixel5d-v2",
+        "predictions": RUNS / "jsg_core_predictions_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "requests": RUNS / "jsg_core_requests_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "raw_outputs": RUNS / "jsg_core_outputs_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "output": RUNS / "jsg_core_td_egfa_audit_trace_pixel5d_v2.jsonl",
         "target_scope_labels": [
             "none",
             "face",
@@ -41,12 +46,12 @@ TD_SPECS = {
         ],
     },
     "JSG-Scale": {
-        "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct",
-        "input_condition": "known-tampered/proposal-grounded/B_top3",
-        "predictions": RUNS / "sid_fa600_candidate_top3_postreview_predictions.jsonl",
-        "requests": RUNS / "sid_fa600_candidate_top3_requests.jsonl",
-        "raw_outputs": RUNS / "sid_fa600_candidate_top3_qwen25vl_outputs.jsonl",
-        "output": RUNS / "jsg_scale_td_egfa_audit_trace_v1.jsonl",
+        "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct/pixel5d-v2",
+        "input_condition": "known-tampered/proposal-grounded/B_top3/pixel5d-v2",
+        "predictions": RUNS / "jsg_scale_predictions_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "requests": RUNS / "jsg_scale_requests_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "raw_outputs": RUNS / "jsg_scale_outputs_pixel5d_v2_legacy_prompt_controlled.jsonl",
+        "output": RUNS / "jsg_scale_td_egfa_audit_trace_pixel5d_v2.jsonl",
         "target_scope_labels": [
             "none",
             "face",
@@ -64,18 +69,26 @@ TD_SPECS = {
 SIDA_SOURCE = RUNS / "sida_jsg_core_adapted_predictions.jsonl"
 SIDA_OUTPUT = RUNS / "jsg_core_sida_audit_trace_v1.jsonl"
 
-XFER_SEMANTIC = RUNS / "external_semantic_eval_rows.jsonl"
-XFER_LOWLEVEL = RUNS / "jsg_xfer_td_egfa_lowlevel_v2.jsonl"
+XFER_SEMANTIC = RUNS / "jsg_xfer_semantic_rows_pixel5d_v2.jsonl"
+XFER_SELECTION = RUNS / "external_semantic_eval_rows.jsonl"
+XFER_LOWLEVEL = RUNS / "jsg_xfer_lowlevel_pixel5d_v2.jsonl"
 XFER_PREDICTIONS = [
-    RUNS / "jsg_xfer_td_egfa_predictions_v2.jsonl",
+    RUNS / "jsg_xfer_predictions_pixel5d_v2.jsonl",
 ]
 XFER_REQUESTS = [
-    RUNS / "jsg_xfer_td_egfa_requests_v2.jsonl",
+    RUNS / "jsg_xfer_requests_pixel5d_v2.jsonl",
 ]
 XFER_RAW_OUTPUTS = [
-    RUNS / "jsg_xfer_td_egfa_native_outputs_v2.jsonl",
+    RUNS / "jsg_xfer_outputs_pixel5d_v2.jsonl",
 ]
-XFER_OUTPUT = RUNS / "jsg_xfer_td_egfa_audit_trace_v1.jsonl"
+XFER_OUTPUT = RUNS / "jsg_xfer_td_egfa_audit_trace_pixel5d_v2.jsonl"
+
+EXPECTED_JOINT_PASSES = {
+    "JSG-Core/TD-EGFA": {"primary_strict": 35, "shared_fields": 61, "set_compatible": 35},
+    "JSG-Scale/TD-EGFA": {"primary_strict": 156, "shared_fields": 196, "set_compatible": 156},
+    "JSG-Xfer/TD-EGFA": {"primary_strict": 21, "shared_fields": 40, "set_compatible": 21, "primary_or_secondary": 30},
+    "JSG-Core/SIDA": {"primary_strict": 0, "shared_fields": 32, "set_compatible": 13},
+}
 
 
 def read_jsonl_indexed(path: Path) -> tuple[list[dict[str, Any]], dict[str, tuple[int, dict[str, Any]]]]:
@@ -156,6 +169,7 @@ def merged_index(paths: list[Path]) -> dict[str, tuple[Path, int, dict[str, Any]
 
 
 def profile(conditions: dict[str, bool], condition_order: list[str]) -> dict[str, Any]:
+    conditions = gate_conditions(conditions["parse"], **{k: v for k, v in conditions.items() if k != "parse"})
     passes = {name: bool(conditions[name]) for name in condition_order}
     failed = [name for name in condition_order if not passes[name]]
     return {
@@ -179,22 +193,27 @@ def td_trace_rows(dataset: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
         img_id = str(prediction_row["img_id"])
         prediction_line, frozen = predictions[img_id]
         request_line, request = requests[img_id]
-        raw_line, _ = raw_outputs[img_id]
-        normalized = frozen.get("prediction") or {}
-        parse_valid = bool(normalized.get("parsed", True))
+        raw_line, raw = raw_outputs[img_id]
+        normalized = prediction_item(raw, request)
+        parse_valid = normalized["parsed"]
         output_bbox = normalized.get("evidence_bbox")
+        if output_bbox != (frozen.get("prediction") or {}).get("evidence_bbox"):
+            raise ValueError(f"Raw/frozen evaluated box mismatch for {dataset}/{img_id}")
         gold = frozen.get("gold") or {}
+        request_metadata = request.get("metadata_for_evaluation_only") or {}
+        candidate_bbox = request_metadata.get("candidate_bbox")
+        region_source = normalized["region_source"]
         recomputed_semantic = {
-            "prediction_correct": normalized.get("prediction") == gold.get("prediction"),
-            "artifact_correct": normalized.get("artifact_type") == gold.get("artifact_type"),
-            "target_correct": normalized.get("target_scope") == gold.get("target_scope"),
+            "prediction_correct": normalized["prediction_present"] and normalized.get("prediction") == gold.get("prediction"),
+            "artifact_correct": normalized["artifact_present"] and normalized.get("artifact_type") == gold.get("artifact_type"),
+            "target_correct": normalized["target_present"] and normalized.get("target_scope") == gold.get("target_scope"),
         }
         for key, value in recomputed_semantic.items():
             if bool(frozen.get(key)) != bool(parse_valid and value):
                 raise ValueError(f"Stored/recomputed {key} mismatch for {dataset}/{img_id}")
         if output_bbox is not None:
             candidate_bbox = (request.get("metadata_for_evaluation_only") or {}).get("candidate_bbox")
-            if output_bbox != candidate_bbox:
+            if region_source == "inherited_proposal" and output_bbox != candidate_bbox:
                 raise ValueError(f"Output/proposal bbox mismatch for {dataset}/{img_id}")
             recomputed_iou = bbox_iou(output_bbox, gold["evidence_bbox"])
             if not math.isclose(recomputed_iou, float(frozen.get("bbox_iou") or 0.0), abs_tol=1e-12):
@@ -209,7 +228,6 @@ def td_trace_rows(dataset: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
         }
         primary = profile(conditions, ["parse", "prediction", "artifact", "target", "spatial"])
         shared = profile(conditions, ["parse", "prediction", "target", "spatial"])
-        request_metadata = request.get("metadata_for_evaluation_only") or {}
         traces.append(
             {
                 "contract_version": CONTRACT_VERSION,
@@ -217,7 +235,7 @@ def td_trace_rows(dataset: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
                 "sample_id": img_id,
                 "system_id": spec["system_id"],
                 "input_condition": spec["input_condition"],
-                "parser_or_adapter_version": "td-egfa-json-normalizer-v1",
+                "parser_or_adapter_version": "td-egfa-json-normalizer-v1.1",
                 "prompt_version": request.get("prompt_version"),
                 "source_references": {
                     "request": reference(spec["requests"], request_line),
@@ -239,7 +257,7 @@ def td_trace_rows(dataset: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
                 },
                 "evaluated_region": {
                     "bbox": output_bbox,
-                    "provenance": "inherited_B_top3" if output_bbox is not None else "null_after_parse_or_rejection",
+                    "provenance": region_source,
                     "candidate_bbox": request_metadata.get("candidate_bbox"),
                     "candidate_mode": request_metadata.get("candidate_mode"),
                     "iou_threshold": IOU_THRESHOLD,
@@ -276,7 +294,7 @@ def sida_trace_rows() -> list[dict[str, Any]]:
                 "native_sample_id": row.get("sample_id"),
                 "system_id": row.get("system_id") or "SIDA-7B-description-FP16",
                 "input_condition": "known-tampered/native-original-image",
-                "parser_or_adapter_version": "sida-native-posthoc-adapter-v1",
+                "parser_or_adapter_version": "sida-native-posthoc-adapter-v1.1",
                 "prompt_version": "sida-verbatim-native-instruction-v1",
                 "source_references": {
                     "native_and_normalized_output": reference(SIDA_SOURCE, source_line),
@@ -323,11 +341,14 @@ def sida_trace_rows() -> list[dict[str, Any]]:
 
 def xfer_trace_rows() -> list[dict[str, Any]]:
     semantic_rows, semantic_index = read_jsonl_indexed(XFER_SEMANTIC)
+    _, selection_index = read_jsonl_indexed(XFER_SELECTION)
     lowlevels = merged_index([XFER_LOWLEVEL])
     predictions = merged_index(XFER_PREDICTIONS)
     requests = merged_index(XFER_REQUESTS)
     raw_outputs = merged_index(XFER_RAW_OUTPUTS)
     expected_ids = set(semantic_index)
+    if set(selection_index) != expected_ids:
+        raise ValueError("Unaligned JSG-Xfer selection IDs")
     for source_name, source in (
         ("lowlevel", lowlevels),
         ("predictions", predictions),
@@ -342,18 +363,22 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
         if img_id not in predictions or img_id not in requests or img_id not in raw_outputs:
             raise ValueError(f"Missing JSG-Xfer source for {img_id}")
         semantic_line, semantic = semantic_index[img_id]
+        selection_line, selection = selection_index[img_id]
         lowlevel_path, lowlevel_line, lowlevel = lowlevels[img_id]
         prediction_path, prediction_line, prediction = predictions[img_id]
         request_path, request_line, request = requests[img_id]
         raw_path, raw_line, raw = raw_outputs[img_id]
-        normalized_raw = raw.get("vlm_result") or {}
-        parse_valid = bool(normalized_raw)
-        output_bbox = prediction.get("pred_bbox")
+        normalized_raw = prediction_item(raw, request)
+        parse_valid = normalized_raw["parsed"]
+        output_bbox = normalized_raw["evidence_bbox"]
+        if output_bbox != prediction.get("pred_bbox"):
+            raise ValueError(f"Raw/frozen evaluated box mismatch for JSG-Xfer/{img_id}")
         request_metadata = request.get("metadata_for_evaluation_only") or {}
         candidate_bbox = request_metadata.get("candidate_bbox")
+        region_source = normalized_raw["region_source"]
         if top3_union(lowlevel) != candidate_bbox:
             raise ValueError(f"Low-level/request candidate bbox mismatch for JSG-Xfer/{img_id}")
-        if output_bbox is not None and output_bbox != candidate_bbox:
+        if region_source == "inherited_proposal" and output_bbox != candidate_bbox:
             raise ValueError(f"Prediction/request candidate bbox mismatch for JSG-Xfer/{img_id}")
         if parse_valid:
             for raw_key, semantic_key in (("artifact_type", "pred_artifact"), ("target_scope", "pred_target")):
@@ -365,23 +390,25 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
                 raise ValueError(f"Stored/recomputed IoU mismatch for JSG-Xfer/{img_id}")
         conditions = {
             "parse": parse_valid,
-            "prediction": bool(parse_valid and prediction.get("prediction") == "tampered"),
-            "artifact": bool(parse_valid and semantic.get("artifact_correct")),
-            "target": bool(parse_valid and semantic.get("target_correct")),
+            "prediction": bool(parse_valid and normalized_raw["prediction_present"] and normalized_raw["prediction"] == "tampered"),
+            "artifact": bool(parse_valid and normalized_raw["artifact_present"] and semantic.get("artifact_correct")),
+            "target": bool(parse_valid and normalized_raw["target_present"] and semantic.get("target_correct")),
             "spatial": bool(
                 parse_valid
                 and output_bbox is not None
                 and float(semantic.get("bbox_iou") or 0.0) >= IOU_THRESHOLD
             ),
         }
-        set_conditions = {
+        primary_or_secondary_conditions = {
             **conditions,
-            "artifact": bool(parse_valid and semantic.get("artifact_primary_or_secondary_correct")),
+            "artifact": bool(parse_valid and normalized_raw["artifact_present"] and semantic.get("artifact_primary_or_secondary_correct")),
         }
         primary = profile(conditions, ["parse", "prediction", "artifact", "target", "spatial"])
         shared = profile(conditions, ["parse", "prediction", "target", "spatial"])
-        set_compatible = profile(
-            set_conditions,
+        # One emitted cue: Set matching equals strict-primary matching.
+        set_compatible = primary
+        primary_or_secondary = profile(
+            primary_or_secondary_conditions,
             ["parse", "prediction", "artifact", "target", "spatial"],
         )
         traces.append(
@@ -390,11 +417,20 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
                 "dataset": "JSG-Xfer",
                 "external_dataset": semantic.get("external_dataset"),
                 "sample_id": img_id,
-                "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct",
-                "input_condition": "known-tampered/proposal-grounded/B_top3/stratified-external",
-                "parser_or_adapter_version": "td-egfa-external-semantic-normalizer-v1",
+                "sampling_stratum": xfer_stratum(
+                    selection.get("external_dataset"),
+                    float(selection.get("bbox_iou") or 0.0),
+                ),
+                "selection_iou_legacy": float(selection.get("bbox_iou") or 0.0),
+                "system_id": "TD-EGFA/Qwen2.5-VL-3B-Instruct/pixel5d-v2",
+                "input_condition": (
+                    "known-tampered/proposal-grounded/B_top3/"
+                    "pixel5d-v2/unified-runtime"
+                ),
+                "parser_or_adapter_version": "candidate-evidence-v1.1/pixel5d-v2",
                 "prompt_version": request.get("prompt_version"),
                 "source_references": {
+                    "selection_record": reference(XFER_SELECTION, selection_line),
                     "lowlevel_candidate": reference(lowlevel_path, lowlevel_line),
                     "request": reference(request_path, request_line),
                     "raw_output": reference(raw_path, raw_line),
@@ -416,7 +452,7 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
                 },
                 "evaluated_region": {
                     "bbox": output_bbox,
-                    "provenance": "inherited_B_top3" if output_bbox is not None else "null_after_parse_or_rejection",
+                    "provenance": region_source,
                     "candidate_bbox": request_metadata.get("candidate_bbox"),
                     "candidate_mode": request_metadata.get("candidate_mode"),
                     "candidate_geometry_version": request.get("candidate_geometry_version"),
@@ -428,6 +464,7 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
                     "primary_strict": primary,
                     "shared_fields": shared,
                     "set_compatible": set_compatible,
+                    "primary_or_secondary": primary_or_secondary,
                 },
             }
         )
@@ -435,7 +472,9 @@ def xfer_trace_rows() -> list[dict[str, Any]]:
 
 
 def summarize_trace(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    profiles = ("primary_strict", "shared_fields", "set_compatible")
+    profiles = tuple(rows[0]["audit_profiles"])
+    if any(set(row["audit_profiles"]) != set(profiles) for row in rows):
+        raise ValueError("Inconsistent profile sets within a trace")
     primary_j_auc = sum(
         float(row["evaluated_region"]["iou"])
         * float(
@@ -457,6 +496,48 @@ def summarize_trace(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
             for name in profiles
         },
     }
+
+
+def validate_trace_contract(rows: list[dict[str, Any]], contract: dict[str, Any]) -> None:
+    required_fields = set(contract["trace_required_fields"])
+    expected_profiles = set(contract["profiles"])
+    for row in rows:
+        sample_id = str(row.get("sample_id") or "<missing>")
+        missing_fields = sorted(required_fields - set(row))
+        if missing_fields:
+            raise ValueError(
+                f"Trace row {sample_id} is missing contract fields: {missing_fields}"
+            )
+        profiles = row.get("audit_profiles") or {}
+        missing_profiles = sorted(expected_profiles - set(profiles))
+        if missing_profiles:
+            raise ValueError(
+                f"Trace row {sample_id} is missing audit profiles: {missing_profiles}"
+            )
+        for profile_name, profile_value in profiles.items():
+            condition_order = profile_value.get("condition_order") or []
+            conditions = profile_value.get("conditions") or {}
+            pass_vector = profile_value.get("pass_vector") or []
+            expected_vector = [bool(conditions.get(name)) for name in condition_order]
+            expected_failed = [name for name in condition_order if not conditions.get(name)]
+            if pass_vector != expected_vector:
+                raise ValueError(
+                    f"Trace row {sample_id}/{profile_name} has an invalid pass vector"
+                )
+            if profile_value.get("failed_conditions") != expected_failed:
+                raise ValueError(
+                    f"Trace row {sample_id}/{profile_name} has invalid failed conditions"
+                )
+            if bool(profile_value.get("joint")) != all(expected_vector):
+                raise ValueError(
+                    f"Trace row {sample_id}/{profile_name} has an invalid Joint outcome"
+                )
+
+
+def validate_manifest_counts(manifest: dict[str, Any]) -> None:
+    observed = {key: value["joint_passes"] for key, value in manifest["traces"].items()}
+    if observed != EXPECTED_JOINT_PASSES:
+        raise ValueError(f"Trace pass counts changed: {observed}")
 
 
 def main() -> None:
@@ -488,9 +569,10 @@ def main() -> None:
             "set_compatible": ["parse", "prediction", "artifact_set_hit", "target", "spatial"],
         },
     }
-    contract_path = REPORTS / "jsg_audit_contract_v1.json"
-    contract_path.parent.mkdir(parents=True, exist_ok=True)
-    contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    contract_path = CONFIGS / "jsg_audit_contract_v1.json"
+    frozen_contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if frozen_contract != contract:
+        raise ValueError(f"Frozen contract differs from exporter definition: {contract_path}")
 
     manifest: dict[str, Any] = {
         "manifest_version": RUN_MANIFEST_VERSION,
@@ -508,6 +590,7 @@ def main() -> None:
     }
     for dataset, spec in TD_SPECS.items():
         rows = td_trace_rows(dataset, spec)
+        validate_trace_contract(rows, contract)
         write_jsonl(spec["output"], rows)
         manifest["traces"][f"{dataset}/TD-EGFA"] = summarize_trace(spec["output"], rows)
         for source_key in ("predictions", "requests", "raw_outputs"):
@@ -515,10 +598,12 @@ def main() -> None:
             manifest["source_files"][str(source.relative_to(ROOT))] = sha256(source)
 
     xfer_rows = xfer_trace_rows()
+    validate_trace_contract(xfer_rows, contract)
     write_jsonl(XFER_OUTPUT, xfer_rows)
     manifest["traces"]["JSG-Xfer/TD-EGFA"] = summarize_trace(XFER_OUTPUT, xfer_rows)
     for source in [
         XFER_SEMANTIC,
+        XFER_SELECTION,
         XFER_LOWLEVEL,
         *XFER_PREDICTIONS,
         *XFER_REQUESTS,
@@ -527,9 +612,12 @@ def main() -> None:
         manifest["source_files"][str(source.relative_to(ROOT))] = sha256(source)
 
     sida_rows = sida_trace_rows()
+    validate_trace_contract(sida_rows, contract)
     write_jsonl(SIDA_OUTPUT, sida_rows)
     manifest["traces"]["JSG-Core/SIDA"] = summarize_trace(SIDA_OUTPUT, sida_rows)
     manifest["source_files"][str(SIDA_SOURCE.relative_to(ROOT))] = sha256(SIDA_SOURCE)
+
+    validate_manifest_counts(manifest)
 
     manifest_path = REPORTS / "jsg_audit_trace_manifest_v1.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

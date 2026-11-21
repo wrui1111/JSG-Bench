@@ -1,0 +1,56 @@
+{
+  "version": "v1.5",
+  "code_ref": "refs/tags/v1.5",
+  "release_url": "https://github.com/wrui1111/JSG-Bench/releases/tag/v1.5",
+  "manuscript": {
+    "title": "Auditing Structured Image Forensic Reports Beyond Field Marginals",
+    "pages": 14,
+    "tables": 12,
+    "figures": 5,
+    "unresolved_cross_references": 0,
+    "unresolved_citations": 0,
+    "pdf_sha256": "8e658feff24e628310e66c41ee19a6525b77bf1dab837be74a0c6182be1b5bf0",
+    "tex_sha256": "09a11e312abbdaf40ddce78c850179618be78b69c66ec5c8743c5a9c37ff4b30"
+  },
+  "supplement": {
+    "file": "Supplementary_Material_S1_v1.5.zip",
+    "sha256": "2eed065529905cd6b2e900ecb5ce2d3acb532ae7e633b13ca75d3131f3faa509",
+    "tables": "S1-S9",
+    "primary_records": 900,
+    "stability_pairs": 3600,
+    "core_mapping_records": 200
+  },
+  "validation": {
+    "project_tests_passed": 25,
+    "standalone_supplement_tests_passed": 3,
+    "native_rebuild_identical_files": 6
+  },
+  "results": {
+    "scale_matched_passes": 156,
+    "scale_donor_passes": [
+      140,
+      130,
+      131,
+      139,
+      134
+    ],
+    "scale_donor_changed": [
+      108,
+      104,
+      103,
+      101,
+      102
+    ],
+    "original_shared": [
+      61,
+      32,
+      25
+    ],
+    "coarse_shared": [
+      61,
+      59,
+      45
+    ],
+    "minimum_holm_p": 0.06918097533373976
+  }
+}

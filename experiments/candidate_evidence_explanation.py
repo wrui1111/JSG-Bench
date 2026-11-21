@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from audit_validation import check_output_ids, field_valid, image_dimensions, index_rows, valid_bbox
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -618,17 +621,6 @@ def normalize_target(value: Any) -> str:
     return TARGET_ALIASES.get(normalize_text(value), normalize_text(value) or "none")
 
 
-def valid_bbox(value: Any) -> list[int] | None:
-    if not isinstance(value, list) or len(value) != 4:
-        return None
-    try:
-        x1, y1, x2, y2 = [int(round(float(v))) for v in value]
-    except (TypeError, ValueError):
-        return None
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return [x1, y1, x2, y2]
-
 
 def union_bbox(boxes: list[list[int]]) -> list[int] | None:
     valid = [box for box in (valid_bbox(box) for box in boxes) if box]
@@ -842,6 +834,8 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def load_vlm_result(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("error"):
+        return {}
     if isinstance(row.get("vlm_result"), dict):
         return row["vlm_result"]
     if isinstance(row.get("vlm_raw_text"), str):
@@ -879,28 +873,48 @@ def gold_item(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def prediction_item(row: dict[str, Any], request: dict[str, Any] | None) -> dict[str, Any]:
+def prediction_item(row: dict[str, Any], request: dict[str, Any] | None, width: int | None = None, height: int | None = None) -> dict[str, Any]:
     result = load_vlm_result(row)
     prediction_value = result.get("prediction") or result.get("class") or result.get("evidence_mode")
-    pred_bbox = valid_bbox(result.get("evidence_bbox"))
+    artifact_value = result.get("artifact_type")
+    target_value = result.get("target_scope")
+    metadata = (request or {}).get("metadata_for_evaluation_only") or {}
+    width = width if width is not None else metadata.get("width")
+    height = height if height is not None else metadata.get("height")
+    pred_bbox = valid_bbox(result.get("evidence_bbox"), width, height)
     candidate_bbox = None
     if request:
         meta = request.get("metadata_for_evaluation_only")
         if isinstance(meta, dict):
-            candidate_bbox = valid_bbox(meta.get("candidate_bbox"))
+            candidate_bbox = valid_bbox(meta.get("candidate_bbox"), width, height)
     prompt_version = str(request.get("prompt_version") if request else "")
     should_inherit_candidate = "bbox_refine" not in prompt_version
-    if normalize_prediction(prediction_value) == "tampered" and candidate_bbox is not None and should_inherit_candidate:
+    inherits_candidate = (
+        normalize_prediction(prediction_value) == "tampered"
+        and candidate_bbox is not None
+        and should_inherit_candidate
+    )
+    if inherits_candidate:
         pred_bbox = candidate_bbox
+    region_source = (
+        "missing" if pred_bbox is None else
+        "inherited_proposal" if inherits_candidate else
+        "model_emitted"
+    )
     return {
         "prediction": normalize_prediction(prediction_value),
+        "prediction_present": field_valid(prediction_value, normalize_prediction(prediction_value), set(PREDICTION_ALIASES.values())),
         "candidate_verdict": normalize_text(result.get("candidate_verdict")),
-        "artifact_type": normalize_artifact(result.get("artifact_type")),
-        "target_scope": normalize_target(result.get("target_scope")),
+        "artifact_type": normalize_artifact(artifact_value),
+        "artifact_present": field_valid(artifact_value, normalize_artifact(artifact_value), set(ARTIFACT_ALIASES.values())),
+        "target_scope": normalize_target(target_value),
+        "target_present": field_valid(target_value, normalize_target(target_value), set(TARGET_ALIASES.values())),
         "evidence_bbox": pred_bbox,
+        "region_source": region_source,
         "evidence_text": result.get("evidence_text"),
         "confidence": result.get("confidence"),
         "parsed": bool(result),
+        "bbox_explicit_null": "evidence_bbox" in result and result["evidence_bbox"] is None,
     }
 
 
@@ -909,9 +923,12 @@ def pct(value: float | None) -> str:
 
 
 def evaluate(args: argparse.Namespace) -> None:
-    annotations = {row["img_id"]: row for row in read_jsonl(args.annotations)}
-    outputs = read_jsonl(args.outputs)
-    requests = {row["img_id"]: row for row in read_jsonl(args.requests)} if args.requests else {}
+    annotations = index_rows(read_jsonl(args.annotations), "annotations")
+    outputs = index_rows(read_jsonl(args.outputs), "outputs")
+    check_output_ids(annotations, outputs)
+    requests = index_rows(read_jsonl(args.requests), "requests") if args.requests else {}
+    if args.requests and set(requests) != set(annotations):
+        raise ValueError("Request IDs must match the declared annotation manifest")
 
     rows_out = []
     counts = Counter()
@@ -920,21 +937,21 @@ def evaluate(args: argparse.Namespace) -> None:
     ious = []
     pointing = []
 
-    for out in outputs:
-        img_id = out.get("img_id")
-        ann = annotations.get(img_id)
-        if not ann:
-            continue
+    for img_id, ann in annotations.items():
+        out = outputs.get(img_id, {})
+        width, height = image_dimensions(ann)
         req = requests.get(img_id)
         gold = gold_item(ann)
-        pred = prediction_item(out, req)
+        if gold["evidence_bbox"] is not None and valid_bbox(gold["evidence_bbox"], width, height) is None:
+            raise ValueError(f"Reference bbox outside image for {img_id}")
+        pred = prediction_item(out, req, width, height)
         cls = gold["prediction"]
         counts["samples"] += 1
         counts["parsed"] += int(pred["parsed"])
 
-        pred_ok = pred["prediction"] == gold["prediction"]
-        artifact_ok = pred["artifact_type"] == gold["artifact_type"]
-        target_ok = pred["target_scope"] == gold["target_scope"]
+        pred_ok = bool(pred["parsed"] and pred["prediction_present"] and pred["prediction"] == gold["prediction"])
+        artifact_ok = bool(pred["parsed"] and pred["artifact_present"] and pred["artifact_type"] == gold["artifact_type"])
+        target_ok = bool(pred["parsed"] and pred["target_present"] and pred["target_scope"] == gold["target_scope"])
         counts["prediction_correct"] += int(pred_ok)
         counts["artifact_correct"] += int(artifact_ok)
         counts["target_correct"] += int(target_ok)
@@ -959,7 +976,7 @@ def evaluate(args: argparse.Namespace) -> None:
             by_class[cls]["bbox_iou_0_1"] += int(bbox_iou_value >= 0.1)
             by_class[cls]["bbox_iou_0_3"] += int(bbox_iou_value >= 0.3)
             by_class[cls]["pointing_hit"] += int(pointing_hit)
-        elif pred["evidence_bbox"] is None:
+        elif pred["parsed"] and pred["bbox_explicit_null"] and pred["evidence_bbox"] is None:
             counts["null_bbox_correct"] += 1
             by_class[cls]["null_bbox_correct"] += 1
         counts["null_bbox_expected"] += int(gold["evidence_bbox"] is None)
@@ -984,6 +1001,8 @@ def evaluate(args: argparse.Namespace) -> None:
         "annotations": str(args.annotations),
         "outputs": str(args.outputs),
         "samples": total,
+        "missing_outputs": len(set(annotations) - set(outputs)),
+        "validation_version": "jsg-evaluator-validation-v1.1",
         "parse_rate": counts["parsed"] / total if total else 0.0,
         "prediction_accuracy": counts["prediction_correct"] / total if total else 0.0,
         "artifact_type_accuracy": counts["artifact_correct"] / total if total else 0.0,
